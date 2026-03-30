@@ -1,0 +1,28 @@
+{
+  "name": "recipe-automation-engine",
+  "version": "1.0.0",
+  "description": "Production-ready BullMQ + Node.js recipe automation engine with Supabase integration",
+  "main": "dist/worker.js",
+  "scripts": {
+    "dev": "ts-node worker.ts",
+    "build": "tsc",
+    "start": "node dist/worker.js",
+    "worker": "ts-node worker.ts",
+    "scheduler": "ts-node workers/scheduler.ts",
+    "migrate": "psql -U postgres -d postgres -f database.sql",
+    "format": "prettier --write .",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.0",
+    "bullmq": "^5.0.0",
+    "cron-parser": "^4.9.1",
+    "dotenv": "^16.3.1",
+    "redis": "^4.6.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "typescript": "^5.2.2",
+    "ts-node": "^10.9.1"
+  }
+}
