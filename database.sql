@@ -1,7 +1,7 @@
 -- ============================================
--- RECIPES TABLE
+-- WORKFLOWS TABLE
 -- ============================================
-CREATE TABLE IF NOT EXISTS recipes (
+CREATE TABLE IF NOT EXISTS workflows (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -18,18 +18,18 @@ CREATE TABLE IF NOT EXISTS recipes (
   is_active BOOLEAN DEFAULT TRUE,
   is_public BOOLEAN DEFAULT FALSE,
   
-  CONSTRAINT recipe_owner CHECK (user_id IS NOT NULL)
+  CONSTRAINT workflow_owner CHECK (user_id IS NOT NULL)
 );
 
-CREATE INDEX IF NOT EXISTS idx_recipes_user_id ON recipes(user_id);
-CREATE INDEX IF NOT EXISTS idx_recipes_is_active ON recipes(is_active);
+CREATE INDEX IF NOT EXISTS idx_workflows_user_id ON workflows(user_id);
+CREATE INDEX IF NOT EXISTS idx_workflows_is_active ON workflows(is_active);
 
 -- ============================================
--- SCHEDULED RECIPES TABLE
+-- SCHEDULED_WORKFLOWS TABLE
 -- ============================================
-CREATE TABLE IF NOT EXISTS scheduled_recipes (
+CREATE TABLE IF NOT EXISTS scheduled_workflows (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   
   name TEXT NOT NULL,
@@ -54,18 +54,18 @@ CREATE TABLE IF NOT EXISTS scheduled_recipes (
   CONSTRAINT schedule_owner CHECK (user_id IS NOT NULL)
 );
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_recipes_user_id ON scheduled_recipes(user_id);
-CREATE INDEX IF NOT EXISTS idx_scheduled_recipes_recipe_id ON scheduled_recipes(recipe_id);
-CREATE INDEX IF NOT EXISTS idx_scheduled_recipes_status ON scheduled_recipes(status);
-CREATE INDEX IF NOT EXISTS idx_scheduled_recipes_next_run ON scheduled_recipes(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_user_id ON scheduled_workflows(user_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_workflow_id ON scheduled_workflows(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_status ON scheduled_workflows(status);
+CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_next_run ON scheduled_workflows(next_run_at);
 
 -- ============================================
--- EXECUTION LOGS TABLE
+-- EXECUTION_LOGS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS execution_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  scheduled_recipe_id UUID NOT NULL REFERENCES scheduled_recipes(id) ON DELETE CASCADE,
-  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  scheduled_workflow_id UUID NOT NULL REFERENCES scheduled_workflows(id) ON DELETE CASCADE,
+  workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   
   status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'success', 'failed', 'timeout', 'cancelled')),
@@ -90,17 +90,17 @@ CREATE TABLE IF NOT EXISTS execution_logs (
   CONSTRAINT execution_owner CHECK (user_id IS NOT NULL)
 );
 
-CREATE INDEX IF NOT EXISTS idx_execution_logs_scheduled_recipe ON execution_logs(scheduled_recipe_id);
+CREATE INDEX IF NOT EXISTS idx_execution_logs_scheduled_workflow ON execution_logs(scheduled_workflow_id);
 CREATE INDEX IF NOT EXISTS idx_execution_logs_user_id ON execution_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_execution_logs_status ON execution_logs(status);
 CREATE INDEX IF NOT EXISTS idx_execution_logs_created_at ON execution_logs(created_at);
 
 -- ============================================
--- RECIPE STEPS TABLE
+-- WORKFLOW_STEPS TABLE
 -- ============================================
-CREATE TABLE IF NOT EXISTS recipe_steps (
+CREATE TABLE IF NOT EXISTS workflow_steps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   
   step_number INTEGER NOT NULL,
   name TEXT NOT NULL,
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS recipe_steps (
   tool_slug TEXT NOT NULL,
   tool_arguments JSONB NOT NULL DEFAULT '{}',
   
-  depends_on_step_id UUID REFERENCES recipe_steps(id),
+  depends_on_step_id UUID REFERENCES workflow_steps(id),
   run_if_condition JSONB,
   retry_on_failure BOOLEAN DEFAULT TRUE,
   max_retries INTEGER DEFAULT 3,
@@ -122,13 +122,13 @@ CREATE TABLE IF NOT EXISTS recipe_steps (
   updated_at TIMESTAMP DEFAULT NOW(),
   
   CONSTRAINT valid_step_number CHECK (step_number > 0),
-  UNIQUE(recipe_id, step_number)
+  UNIQUE(workflow_id, step_number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe_id ON recipe_steps(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow_id ON workflow_steps(workflow_id);
 
 -- ============================================
--- MCP CREDENTIALS TABLE
+-- MCP_CREDENTIALS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS mcp_credentials (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -153,11 +153,11 @@ CREATE INDEX IF NOT EXISTS idx_mcp_credentials_user_id ON mcp_credentials(user_i
 CREATE INDEX IF NOT EXISTS idx_mcp_credentials_toolkit ON mcp_credentials(toolkit);
 
 -- ============================================
--- WEBHOOK TRIGGERS TABLE
+-- WEBHOOK_TRIGGERS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS webhook_triggers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  scheduled_recipe_id UUID NOT NULL REFERENCES scheduled_recipes(id) ON DELETE CASCADE,
+  scheduled_workflow_id UUID NOT NULL REFERENCES scheduled_workflows(id) ON DELETE CASCADE,
   
   webhook_url TEXT NOT NULL UNIQUE,
   webhook_secret TEXT NOT NULL,
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS webhook_triggers (
 CREATE INDEX IF NOT EXISTS idx_webhook_triggers_webhook_url ON webhook_triggers(webhook_url);
 
 -- ============================================
--- AUDIT LOGS TABLE
+-- AUDIT_LOGS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -198,7 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE OR REPLACE FUNCTION increment_successful_runs(schedule_id UUID)
 RETURNS VOID AS $$
 BEGIN
-  UPDATE scheduled_recipes
+  UPDATE scheduled_workflows
   SET
     successful_runs = successful_runs + 1,
     total_runs = total_runs + 1,
@@ -211,7 +211,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION increment_failed_runs(schedule_id UUID)
 RETURNS VOID AS $$
 BEGIN
-  UPDATE scheduled_recipes
+  UPDATE scheduled_workflows
   SET
     failed_runs = failed_runs + 1,
     total_runs = total_runs + 1,
