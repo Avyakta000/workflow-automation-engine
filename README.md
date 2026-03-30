@@ -1,231 +1,655 @@
 # Workflow Automation Engine
 
-Production-ready BullMQ + Node.js workflow automation engine with Supabase integration. Create, schedule, and execute complex workflows with cron jobs.
+Production-ready BullMQ + Node.js workflow automation engine with Supabase integration. Create, schedule, and execute complex multi-step workflows with cron jobs, error handling, and retry logic.
+
+**GitHub Repository:** [Avyakta000/workflow-automation-engine](https://github.com/Avyakta000/workflow-automation-engine)
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Database Schema](#database-schema)
+- [Quick Start](#quick-start)
+- [How Workflows Work](#how-workflows-work)
+- [API Reference](#api-reference)
+- [Configuration](#configuration)
+- [Development Guide](#development-guide)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+
+## Overview
+
+This project is a **workflow automation engine** that allows users to:
+
+1. **Create Workflows** - Define multi-step automation with various tools (GitHub, Slack, Gmail, etc.)
+2. **Schedule Workflows** - Run automatically on cron schedules
+3. **Execute Workflows** - Process jobs reliably with BullMQ queue
+4. **Monitor Execution** - Track execution logs, errors, and retry attempts
+5. **Integrate with MCPs** - Connect to 100+ apps via MCP (Model Context Protocol)
+
+**Example Use Case:** Create a daily GitHub issue with AI-generated description and post notification to Slack.
 
 ## Features
 
-✅ **BullMQ Job Queue** - Reliable job processing with Redis  
-✅ **Cron Scheduling** - Schedule workflows with cron expressions  
-✅ **Supabase Integration** - Store workflows, schedules, and execution logs  
-✅ **MCP Support** - Execute tools across GitHub, Slack, Gmail, Notion, etc.  
-✅ **Workflow Engine** - Complex multi-step workflows with dependencies  
+✅ **Job Queue System** - BullMQ with Redis for reliable job processing  
+✅ **Cron Scheduling** - Schedule workflows using cron expressions  
+✅ **Multi-Step Workflows** - Support for sequential steps with dependencies  
 ✅ **Error Handling** - Automatic retries with exponential backoff  
-✅ **Audit Logging** - Complete execution history and debugging  
+✅ **Variable Resolution** - Use `{{params.xxx}}` and `{{steps.0.output}}` in workflow steps  
+✅ **MCP Integration** - Execute tools across GitHub, Slack, Gmail, Notion, etc.  
+✅ **Execution Logging** - Complete history with status, duration, and errors  
 ✅ **Webhook Triggers** - Manual execution via webhooks  
+✅ **Rate Limiting** - Built-in rate limiting and backoff strategies  
+✅ **TypeScript** - Full type safety across the codebase  
 
 ## Architecture
 
 ```
-Next.js App (Vercel)
-    ↓
-Supabase (PostgreSQL)
-    ↓
-Redis (BullMQ Queue)
-    ├→ Worker Process
-    └→ Scheduler (checks every 60s)
-    ↓
-MCP Services (GitHub, Slack, Gmail, etc.)
+┌─────────────────────────────┐
+│    Next.js Web App          │
+│  (Recipe UI, Chat)          │
+└────────────┬────────────────┘
+             │ HTTP API
+             ▼
+┌─────────────────────────────┐
+│    Supabase (PostgreSQL)    │
+│  - workflows                │
+│  - scheduled_workflows      │
+│  - execution_logs           │
+│  - workflow_steps           │
+│  - mcp_credentials          │
+└────────────┬────────────────┘
+             │
+             ▼
+   ┌─────────────────┐
+   │  Redis Queue    │
+   │   (BullMQ)      │
+   └────────┬────────┘
+            │
+    ┌───────┴──────────┐
+    │                  │
+    ▼                  ▼
+┌──────────┐    ┌─────────────────┐
+│Scheduler │    │ Job Worker      │
+│(Every    │    │ Processes steps │
+│ 60sec)   │    │ Executes MCPs   │
+└──────────┘    └────────┬────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │  MCP Services          │
+            │ (GitHub, Slack, Gmail, │
+            │  Notion, etc.)         │
+            └────────────────────────┘
+```
+
+## Tech Stack
+
+- **Runtime:** Node.js 18+
+- **Language:** TypeScript
+- **Job Queue:** BullMQ (with Redis)
+- **Database:** Supabase (PostgreSQL)
+- **Job Scheduling:** node-cron-parser
+- **HTTP Framework:** (Ready for Express/Fastify integration)
+- **Authentication:** Supabase Auth (via parent Next.js app)
+- **Deployment:** Docker, Docker Compose, Kubernetes ready
+
+## Project Structure
+
+```
+workflow-automation-engine/
+├── lib/
+│   ├── redis.ts                 # Redis connection setup
+│   ├── supabase.ts              # Supabase client initialization
+│   ├── queue.ts                 # BullMQ queue configuration
+│   ├── mcp-executor.ts          # MCP tool execution module
+│   └── workflow-executor.ts     # Core workflow engine logic
+├── workers/
+│   ├── workflow-worker.ts       # Job processor (handles execution)
+│   └── scheduler.ts             # Cron scheduler (checks every 60s)
+├── database.sql                 # PostgreSQL schema & functions
+├── worker.ts                    # Main entry point for workers
+├── docker-compose.yml           # Local development setup
+├── Dockerfile                   # Production Docker image
+├── package.json                 # Dependencies
+├── tsconfig.json                # TypeScript configuration
+└── README.md                    # This file
+```
+
+## Database Schema
+
+### Core Tables
+
+#### `workflows`
+Defines workflow templates.
+
+```sql
+id                    UUID      -- Unique workflow ID
+user_id               UUID      -- Owner (from auth.users)
+name                  TEXT      -- Workflow name
+description           TEXT      -- Description
+input_schema          JSONB     -- Input parameter schema (JSON Schema)
+output_schema         JSONB     -- Expected output schema
+workflow              JSONB     -- Workflow definition (array of steps)
+defaults_for_required_parameters JSONB  -- Default input values
+toolkit_ids           TEXT[]    -- List of MCP toolkits used
+is_active             BOOLEAN   -- Is workflow active?
+is_public             BOOLEAN   -- Can others see it?
+created_at            TIMESTAMP
+updated_at            TIMESTAMP
+```
+
+#### `scheduled_workflows`
+Schedules for periodic execution.
+
+```sql
+id                    UUID      -- Schedule ID
+workflow_id           UUID      -- FK to workflows
+user_id               UUID      -- Owner
+name                  TEXT      -- Schedule name
+cron_expression       TEXT      -- Cron expression (e.g., "0 13 * * *")
+cron_timezone         TEXT      -- Timezone (e.g., "Asia/Calcutta")
+status                TEXT      -- 'active' | 'paused' | 'disabled'
+is_enabled            BOOLEAN   -- Master on/off switch
+last_run_at           TIMESTAMP -- When it last executed
+next_run_at           TIMESTAMP -- When it will run next
+total_runs            INTEGER   -- Total execution count
+successful_runs       INTEGER   -- Successful execution count
+failed_runs           INTEGER   -- Failed execution count
+params                JSONB     -- Override input parameters
+created_at            TIMESTAMP
+updated_at            TIMESTAMP
+```
+
+#### `workflow_steps`
+Individual steps within a workflow.
+
+```sql
+id                    UUID      -- Step ID
+workflow_id           UUID      -- FK to workflows
+step_number           INTEGER   -- Execution order (1, 2, 3...)
+name                  TEXT      -- Step name
+description           TEXT      -- What this step does
+toolkit               TEXT      -- MCP toolkit ("github", "slack", etc.)
+tool_slug             TEXT      -- Tool identifier (e.g., "GITHUB_CREATE_AN_ISSUE")
+tool_arguments        JSONB     -- Arguments with variable placeholders
+depends_on_step_id    UUID      -- Optional dependency on another step
+run_if_condition      JSONB     -- Conditional execution logic
+retry_on_failure      BOOLEAN   -- Should retry on failure?
+max_retries           INTEGER   -- How many retry attempts?
+timeout_seconds       INTEGER   -- Step timeout in seconds
+output_mapping        JSONB     -- Map step output to next step input
+created_at            TIMESTAMP
+updated_at            TIMESTAMP
+```
+
+#### `execution_logs`
+Execution history and status.
+
+```sql
+id                      UUID      -- Log ID
+scheduled_workflow_id   UUID      -- FK to scheduled_workflows
+workflow_id             UUID      -- FK to workflows
+user_id                 UUID      -- Owner
+status                  TEXT      -- 'pending'|'running'|'success'|'failed'|'timeout'|'cancelled'
+input_data              JSONB     -- Input parameters passed
+output_data             JSONB     -- Final output/results
+error_message           TEXT      -- Error description if failed
+error_code              TEXT      -- Error code
+error_stack             JSONB     -- Stack trace
+started_at              TIMESTAMP -- When execution started
+completed_at            TIMESTAMP -- When execution completed
+duration_ms             INTEGER   -- Execution duration in milliseconds
+triggered_by            TEXT      -- 'scheduler' | 'manual' | 'webhook'
+job_id                  TEXT      -- BullMQ job identifier
+retry_count             INTEGER   -- Number of retries attempted
+created_at              TIMESTAMP
+```
+
+#### `mcp_credentials`
+Encrypted MCP tool credentials.
+
+```sql
+id                      UUID      -- Credential ID
+user_id                 UUID      -- Owner
+toolkit                 TEXT      -- Tool ("github", "slack", etc.)
+credential_name         TEXT      -- Credential identifier
+encrypted_credential    BYTEA     -- Encrypted credential data
+encryption_key_version  INTEGER   -- Encryption key version
+is_active               BOOLEAN   -- Is this credential active?
+last_used_at            TIMESTAMP -- Last usage timestamp
+created_at              TIMESTAMP
+updated_at              TIMESTAMP
+```
+
+#### Other Tables
+
+- **`webhook_triggers`** - Webhook URLs for manual execution
+- **`audit_logs`** - Activity logging for compliance
+
+### Key Functions
+
+```sql
+increment_successful_runs(schedule_id UUID)
+  -- Increments successful_runs, total_runs, updates last_run_at
+
+increment_failed_runs(schedule_id UUID)
+  -- Increments failed_runs, total_runs, updates last_run_at
+```
+
+## How Workflows Work
+
+### 1. Workflow Definition
+
+Workflows are JSON definitions with steps:
+
+```typescript
+{
+  name: "Create GitHub Issue + Slack Notification",
+  description: "Create a daily issue and notify Slack",
+  input_schema: {
+    type: "object",
+    properties: {
+      repo_owner: { type: "string", description: "GitHub owner" },
+      repo_name: { type: "string", description: "Repository name" },
+      issue_title: { type: "string", description: "Issue title" },
+      slack_channel: { type: "string", description: "Slack channel" }
+    },
+    required: ["repo_owner", "repo_name", "issue_title"]
+  },
+  output_schema: {
+    type: "object",
+    properties: {
+      issue_url: { type: "string", description: "Created issue URL" },
+      notification_sent: { type: "boolean" }
+    }
+  },
+  workflow: [
+    {
+      step_number: 1,
+      toolkit: "github",
+      tool_slug: "GITHUB_CREATE_AN_ISSUE",
+      tool_arguments: {
+        owner: "{{params.repo_owner}}",
+        repo: "{{params.repo_name}}",
+        title: "{{params.issue_title}}",
+        body: "Daily task created at {{params.timestamp}}"
+      },
+      max_retries: 3,
+      timeout_seconds: 30
+    },
+    {
+      step_number: 2,
+      toolkit: "slack",
+      tool_slug: "SLACK_SEND_MESSAGE",
+      tool_arguments: {
+        channel: "{{params.slack_channel}}",
+        text: "Issue created: {{steps.1.data.html_url}}"
+      },
+      max_retries: 2
+    }
+  ]
+}
+```
+
+### 2. Scheduling
+
+Create a schedule with cron expression:
+
+```typescript
+{
+  workflow_id: "uuid-xxx",
+  name: "Daily 1:05 PM",
+  cron_expression: "5 13 * * *",  // Runs at 1:05 PM every day
+  cron_timezone: "Asia/Calcutta",
+  params: {
+    repo_owner: "Avyakta000",
+    repo_name: "portfolio-assistant",
+    issue_title: "Daily Task",
+    slack_channel: "#general"
+  }
+}
+```
+
+### 3. Execution Flow
+
+1. **Scheduler** checks every 60 seconds for workflows to execute
+2. **Creates execution log** in Supabase (status: pending)
+3. **Queues job** in BullMQ with workflow details
+4. **Worker picks up** the job from queue
+5. **Updates log** to "running" status
+6. **For each step:**
+   - Resolves variables (params, previous step outputs)
+   - Calls MCP tool with arguments
+   - Stores output for next step
+   - Retries on failure with exponential backoff
+7. **On completion:**
+   - Updates log with "success" status and output
+   - Updates schedule statistics
+8. **On failure:**
+   - Updates log with "failed" status and error
+   - Retries entire workflow (up to 3 times by default)
+
+## API Reference
+
+### Workflows
+
+```bash
+# Create a workflow
+POST /api/workflows
+{
+  "name": "...",
+  "description": "...",
+  "input_schema": {...},
+  "output_schema": {...},
+  "workflow": [...],
+  "defaults_for_required_parameters": {...}
+}
+
+# List workflows
+GET /api/workflows?limit=20&offset=0
+
+# Get workflow details
+GET /api/workflows/:workflow_id
+
+# Update workflow
+PATCH /api/workflows/:workflow_id
+
+# Delete workflow
+DELETE /api/workflows/:workflow_id
+```
+
+### Scheduled Workflows
+
+```bash
+# Create schedule
+POST /api/scheduled-workflows
+{
+  "workflow_id": "uuid",
+  "name": "...",
+  "cron_expression": "0 13 * * *",
+  "cron_timezone": "Asia/Calcutta",
+  "params": {...}
+}
+
+# List schedules
+GET /api/scheduled-workflows?limit=20
+
+# Get schedule details
+GET /api/scheduled-workflows/:schedule_id
+
+# Update schedule
+PATCH /api/scheduled-workflows/:schedule_id
+
+# Trigger manually (run now)
+POST /api/scheduled-workflows/:schedule_id/trigger
+
+# Pause schedule
+POST /api/scheduled-workflows/:schedule_id/pause
+
+# Resume schedule
+POST /api/scheduled-workflows/:schedule_id/resume
+
+# Delete schedule
+DELETE /api/scheduled-workflows/:schedule_id
+```
+
+### Execution Logs
+
+```bash
+# Get execution history
+GET /api/execution-logs?scheduled_workflow_id=uuid&limit=50&status=success
+
+# Get execution details
+GET /api/execution-logs/:execution_id
+
+# Retry a failed execution
+POST /api/execution-logs/:execution_id/retry
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-key
+SUPABASE_ANON_KEY=your-anon-key
+
+# MCP
+MCP_CREDENTIALS_REDIS_PREFIX=mcp_creds:
+MCP_SERVER_URL=http://localhost:3001
+
+# Worker Configuration
+WORKER_CONCURRENCY=5          # Number of parallel jobs
+WORKER_MAX_ATTEMPTS=3          # Retry attempts
+WORKER_BACKOFF_DELAY=5000      # Initial backoff delay (ms)
+WORKER_JOB_TIMEOUT=600000      # Job timeout (10 min)
+
+# Logging
+LOG_LEVEL=info
+NODE_ENV=development
 ```
 
 ## Quick Start
 
-### 1. Prerequisites
+### Prerequisites
 
 - Node.js 18+
 - Redis (local or cloud)
 - Supabase account
 - Git
 
-### 2. Clone & Setup
+### Installation
 
 ```bash
-git clone https://github.com/Avyakta000/recipe-automation-engine.git
-cd recipe-automation-engine
+# Clone the repository
+git clone https://github.com/Avyakta000/workflow-automation-engine.git
+cd workflow-automation-engine
 
+# Install dependencies
 npm install
+
+# Copy environment template
 cp .env.example .env
+
+# Edit .env with your credentials
+nano .env
 ```
 
-### 3. Configure Environment
-
-Edit `.env` with your credentials:
-
-```env
-REDIS_HOST=localhost
-REDIS_PORT=6379
-SUPABASE_URL=your-url
-SUPABASE_SERVICE_KEY=your-key
-```
-
-### 4. Database Setup
+### Database Setup
 
 ```bash
 # Create tables in Supabase
 psql -U postgres -d postgres -f database.sql
+# OR import via Supabase SQL editor
 ```
 
-### 5. Start Worker
+### Local Development
 
 ```bash
 # Terminal 1: Start Redis
 docker run -d -p 6379:6379 redis:7-alpine
 
-# Terminal 2: Start worker
+# Terminal 2: Start the worker
 npm run worker
 
-# Terminal 3: Start scheduler
+# Terminal 3: Start the scheduler
 npm run scheduler
+
+# OR use Docker Compose for everything
+docker-compose up
 ```
 
-## Project Structure
+### Verify Installation
 
-```
-├── lib/
-│   ├── redis.ts              # Redis connection
-│   ├── supabase.ts           # Supabase client
-│   ├── queue.ts              # BullMQ queues
-│   ├── mcp-executor.ts       # MCP tool execution
-│   └── workflow-executor.ts  # Workflow engine
-├── workers/
-│   ├── workflow-worker.ts    # Job processor
-│   └── scheduler.ts          # Cron scheduler
-├── database.sql              # PostgreSQL schema
-├── worker.ts                 # Main entry point
-└── docker-compose.yml        # Local development
-```
-
-## Database Schema
-
-The system uses Supabase PostgreSQL with the following tables:
-
-- **workflows** - Workflow definitions
-- **scheduled_workflows** - Cron schedules
-- **execution_logs** - Execution history
-- **workflow_steps** - Workflow steps
-- **mcp_credentials** - Encrypted MCP tokens
-- **webhook_triggers** - Manual execution hooks
-- **audit_logs** - Activity logging
-
-See `database.sql` for complete schema.
-
-## Workflow Example
-
-```typescript
-// Workflow: Create GitHub issue + post to Slack
-const workflow = [
-  {
-    step_number: 1,
-    toolkit: 'github',
-    tool_slug: 'GITHUB_CREATE_AN_ISSUE',
-    tool_arguments: {
-      owner: '{{params.repo_owner}}',
-      repo: '{{params.repo_name}}',
-      title: '{{params.issue_title}}',
-      body: '{{params.issue_body}}'
-    }
-  },
-  {
-    step_number: 2,
-    toolkit: 'slack',
-    tool_slug: 'SLACK_SEND_MESSAGE',
-    tool_arguments: {
-      channel: '{{params.slack_channel}}',
-      text: 'Issue created: {{steps.1.data.html_url}}'
-    }
-  }
-];
-```
-
-## Monitoring
-
-### View Job Status
 ```bash
-# Check Redis queue
-redis-cli
-> KEYS workflow*
-> HGETALL bull:workflows:...
+# Check Redis connection
+redis-cli ping
+# Output: PONG
+
+# Check worker is running
+# You should see: "Scheduler started (checks every 60s)"
+# and "Listening for jobs"
 ```
 
-### View Logs
-```bash
-# Check execution logs in Supabase
-SELECT * FROM execution_logs 
-WHERE status = 'failed' 
-ORDER BY created_at DESC;
-```
+## Development Guide
 
-## Troubleshooting
+### For AI Coding Agents
 
-### Jobs Not Processing
-1. Check Redis connection: `redis-cli ping`
-2. Verify worker is running: `npm run worker`
-3. Check Supabase connectivity
+When working with this codebase:
 
-### MCP Execution Failing
-1. Verify credentials in Redis/Supabase
-2. Check MCP server is accessible
-3. Review execution logs for error details
+1. **Understand the Flow:**
+   - Workflows are stored as JSON in Supabase
+   - Scheduler checks every 60 seconds
+   - Worker processes jobs from BullMQ queue
+   - MCP executor handles tool calls
 
-### High Memory Usage
-1. Increase Redis memory limits
-2. Reduce WORKER_CONCURRENCY
-3. Check for memory leaks in MCP tools
+2. **Key Files to Modify:**
+   - `lib/workflow-executor.ts` - Core logic for step execution
+   - `lib/mcp-executor.ts` - MCP integration
+   - `workers/workflow-worker.ts` - Job processing
+   - `workers/scheduler.ts` - Scheduling logic
 
-## Production Deployment
+3. **Variable Resolution Pattern:**
+   - `{{params.xxx}}` → Gets from input params
+   - `{{steps.0.output}}` → Gets from previous step output
+   - Supports nested paths: `{{steps.0.data.html_url}}`
+
+4. **Error Handling:**
+   - Each step has `max_retries` configuration
+   - Exponential backoff: 1s → 2s → 4s
+   - Failed jobs are logged with full error stack
+
+5. **Common Tasks:**
+
+   **Add a new MCP toolkit support:**
+   ```typescript
+   // In lib/mcp-executor.ts
+   async function executeMCPTool(options: ExecuteOptions): Promise<any> {
+     // Already handles all toolkits dynamically
+     // Just need to add credentials in mcp_credentials table
+   }
+   ```
+
+   **Add workflow validation:**
+   ```typescript
+   // In lib/workflow-executor.ts
+   // Validate input_schema against params before execution
+   ```
+
+   **Add step pre/post hooks:**
+   ```typescript
+   // Extend step execution with custom logic
+   ```
+
+6. **Testing Locally:**
+   ```bash
+   # Create a test workflow in Supabase
+   # Create a schedule
+   # Monitor logs in execution_logs table
+   # Check Redis queue: redis-cli
+   ```
+
+## Deployment
 
 ### Docker Deployment
 
 ```bash
+# Build image
 docker build -t workflow-engine .
+
+# Run container
 docker run -d \
   -e REDIS_HOST=redis-prod \
-  -e SUPABASE_URL=prod-url \
-  -e SUPABASE_SERVICE_KEY=prod-key \
+  -e SUPABASE_URL=your-url \
+  -e SUPABASE_SERVICE_KEY=your-key \
+  -e WORKER_CONCURRENCY=10 \
   workflow-engine
 ```
 
-### Kubernetes
+### Production Checklist
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: workflow-engine
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: workflow-engine
-  template:
-    metadata:
-      labels:
-        app: workflow-engine
-    spec:
-      containers:
-      - name: worker
-        image: workflow-engine:latest
-        env:
-        - name: REDIS_HOST
-          value: redis.default.svc.cluster.local
+- [ ] Set `NODE_ENV=production`
+- [ ] Increase `WORKER_CONCURRENCY` (10-20)
+- [ ] Configure Redis for persistence
+- [ ] Enable Supabase backups
+- [ ] Set up monitoring/alerting
+- [ ] Use strong `SUPABASE_SERVICE_KEY`
+- [ ] Enable RLS on database tables
+- [ ] Set up log aggregation
+- [ ] Configure rate limiting
+- [ ] Test failover scenarios
+
+## Troubleshooting
+
+### Jobs Not Processing
+
+```bash
+# Check Redis is running
+redis-cli ping
+
+# Check worker is connected
+# Look for "[OK] Scheduler started" in logs
+
+# Check queue status
+redis-cli
+> KEYS bull:*
+> LLEN bull:workflows:*
 ```
+
+### MCP Execution Failing
+
+1. Verify credentials in `mcp_credentials` table
+2. Check MCP server is accessible from worker
+3. Review `error_stack` in execution logs
+4. Test MCP call manually with credentials
+
+### High Memory Usage
+
+1. Reduce `WORKER_CONCURRENCY`
+2. Check for memory leaks in MCP tools
+3. Increase Redis memory limits
+4. Monitor with `redis-cli INFO memory`
+
+### Cron Not Triggering
+
+1. Check `scheduled_workflows.is_enabled = true`
+2. Verify `cron_expression` is valid
+3. Check `cron_timezone` matches server timezone
+4. Look for errors in scheduler logs
 
 ## Contributing
 
-1. Create a feature branch
-2. Make your changes
-3. Run tests & linting
-4. Submit a pull request
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Write tests
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ## License
 
 MIT - See LICENSE file
 
-## Support
+## Support & Community
 
-- Documentation: ./docs
-- Issues: https://github.com/Avyakta000/recipe-automation-engine/issues
-- Discussions: https://github.com/Avyakta000/recipe-automation-engine/discussions
+- **Issues:** [GitHub Issues](https://github.com/Avyakta000/workflow-automation-engine/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Avyakta000/workflow-automation-engine/discussions)
+- **Documentation:** See docs/ folder
 
 ---
 
-Built with love by Avyakta000
+**Built with ❤️ by Avyakta000**
+
+For AI agents: This is a production-grade workflow automation system. Use the database schema and API reference as your source of truth. Always validate inputs against schemas. Handle errors gracefully with proper logging.
