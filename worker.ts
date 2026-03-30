@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import { schedulerQueue } from './lib/queue';
-import { recipeWorker } from './workers/recipe-worker';
+import { workflowWorker } from './workers/workflow-worker';
 import { schedulerWorker } from './workers/scheduler';
 
 async function startWorkers() {
-  console.log('\n🚀 Starting BullMQ Workers...\n');
+  console.log('[INFO] Starting BullMQ Workflow Engine');
 
   try {
     // Start scheduler to check every 60 seconds
@@ -19,29 +19,29 @@ async function startWorkers() {
       }
     );
 
-    console.log('✅ Scheduler started (checks every 60s)');
-    console.log('✅ Recipe worker ready (concurrency: ' +
+    console.log('[OK] Scheduler started (checks every 60s)');
+    console.log('[OK] Workflow worker ready (concurrency: ' +
       (process.env.WORKER_CONCURRENCY || '5') + ')');
-    console.log('✅ Listening for jobs...\n');
+    console.log('[OK] Listening for jobs');
 
     // Graceful shutdown
     process.on('SIGTERM', async () => {
-      console.log('\n🛑 Shutting down gracefully...');
-      await recipeWorker.close();
+      console.log('[INFO] Shutting down gracefully...');
+      await workflowWorker.close();
       await schedulerWorker.close();
-      console.log('✅ Workers closed');
+      console.log('[OK] Workers closed');
       process.exit(0);
     });
 
     process.on('SIGINT', async () => {
-      console.log('\n🛑 Interrupted, shutting down...');
-      await recipeWorker.close();
+      console.log('[INFO] Interrupted, shutting down...');
+      await workflowWorker.close();
       await schedulerWorker.close();
-      console.log('✅ Workers closed');
+      console.log('[OK] Workers closed');
       process.exit(0);
     });
   } catch (err) {
-    console.error('❌ Failed to start workers:', err);
+    console.error('[ERROR] Failed to start workers:', err);
     process.exit(1);
   }
 }
