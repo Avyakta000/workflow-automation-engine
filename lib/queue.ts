@@ -6,8 +6,8 @@ const redisConnection = {
   password: process.env.REDIS_PASSWORD,
 };
 
-// Main recipe execution queue
-export const recipeQueue = new Queue('recipes', {
+// Main workflow execution queue
+export const workflowQueue = new Queue('workflows', {
   connection: redisConnection,
   settings: {
     maxStalledCount: 2,
@@ -26,16 +26,16 @@ export const webhookQueue = new Queue('webhooks', {
 });
 
 // Job events
-recipeQueue.on('completed', (job) => {
+workflowQueue.on('completed', (job) => {
   console.log(`[Queue] Job ${job.id} completed`);
 });
 
-recipeQueue.on('failed', (job, err) => {
+workflowQueue.on('failed', (job, err) => {
   console.error(`[Queue] Job ${job.id} failed: ${err.message}`);
 });
 
-recipeQueue.on('error', (err) => {
+workflowQueue.on('error', (err) => {
   console.error('[Queue] Error:', err);
 });
 
-export default recipeQueue;
+export default workflowQueue;
